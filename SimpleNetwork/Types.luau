@@ -1,4 +1,4 @@
-export type byteCodes = "u8" | "u16" | "u32" | "i8" | "i16" | "i32" | "f32" | "string" | "bool" | "v3" | "v2" | "cf" | "ud2"
+export type byteCodes = "u8" | "u16" | "u32" | "i8" | "i16" | "i32" | "f32" | "string" | "bool" | "v3" | "v2" | "cf" | "ud2" | "table"
 
 export type bufferHandler = {
 	[number]: byteCodes

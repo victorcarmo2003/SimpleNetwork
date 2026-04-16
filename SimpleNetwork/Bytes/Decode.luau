@@ -28,14 +28,16 @@ local function getEventName(id: number): string
 			return name
 		end
 	end
-	error(`[SimpleNetwork - Decode] Event not registered for id: {id}`)
+	error(`[SimpleNetwork - Decode] Event not registered for id: {id}, did you forget to put OnClient/Onserver?`)
 end
 
-function Decode.Process(handlers: any, payload: buffer, isFunction: boolean, extraArg: Player?)
+function Decode.Process(handlers: any, payload: buffer, isFunction: boolean, extraArg: Player?, trackCallback: ((eventName: string, bytes: number) -> ())?)
 	local c = cursor.Get(payload)
 	local argsByID = {} :: {[number]: {any}}
+	local eventSizes = {} :: {[number]: number} -- Rastrear tamanho por evento
 
 	while c.readerOffset < buffer.len(payload) do
+		local startOffset = c.readerOffset
 		local id = c:readU8()
 		local typeByte = c:readU8()
 		
@@ -53,12 +55,22 @@ function Decode.Process(handlers: any, payload: buffer, isFunction: boolean, ext
 			if not argsByID[id] then argsByID[id] = {} end
 			table.insert(argsByID[id], value)
 		end
+		
+		-- Calcular bytes lidos para este evento
+		local bytesRead = c.readerOffset - startOffset
+		if not eventSizes[id] then eventSizes[id] = 0 end
+		eventSizes[id] += bytesRead
 	end
 
 	local results = {}
 	for id, args in argsByID do
 		local name = getEventName(id)
 		local handlerList = handlers[name]
+		
+		-- Rastrear recebimento
+		if trackCallback and eventSizes[id] then
+			trackCallback(name, eventSizes[id])
+		end
 		
 		if not handlerList then
 			warn(`[SimpleNetwork - Decode] No handlers registered for event: {name}`)

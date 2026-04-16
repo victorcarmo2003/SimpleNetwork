@@ -6,6 +6,7 @@ Bridge.EventToID = {} :: {[string]: number}
 Bridge.IDToEvent = {} :: {[number]: string}
 Bridge.NextID = 1
 Bridge.NextRequestID = 0
+Bridge.OnPackageSent = nil :: ((eventName: string, bytes: number) -> ())? -- Callback para rastreamento
 Bridge.OutQueue = {
 	RemoteEvent = {},
 	RemoteFunction = {},
@@ -16,6 +17,41 @@ Bridge.OutQueue = {
 
 local bytes = script.Parent
 local types = require(bytes.Parent.Types)
+
+-- Serializador para cálculo de tamanho (mesma lógica do Book)
+local function serializeValue(value: any): any
+	local valueType = typeof(value)
+	
+	if valueType == "CFrame" then
+		return {
+			__type = "CFrame",
+			data = {value:GetComponents()}
+		}
+	elseif valueType == "Vector3" then
+		return {
+			__type = "Vector3",
+			data = {value.X, value.Y, value.Z}
+		}
+	elseif valueType == "Vector2" then
+		return {
+			__type = "Vector2",
+			data = {value.X, value.Y}
+		}
+	elseif valueType == "UDim2" then
+		return {
+			__type = "UDim2",
+			data = {value.X.Scale, value.X.Offset, value.Y.Scale, value.Y.Offset}
+		}
+	elseif valueType == "table" then
+		local serialized = {}
+		for k, v in pairs(value) do
+			serialized[k] = serializeValue(v)
+		end
+		return serialized
+	else
+		return value
+	end
+end
 
 Bridge.EventType = {
 	RemoteEvent = 0,
@@ -30,7 +66,7 @@ Bridge.TypeToByte = {
 	["i8"] = 4, ["i16"] = 5, ["i32"] = 6,
 	["f32"] = 7, ["string"] = 8, ["v3"] = 9,
 	["v2"] = 10, ["cf"] = 11, ["ud2"] = 12,
-	["bool"] = 13
+	["bool"] = 13, ["table"] = 14
 }
 
 Bridge.ByteToSize = {
@@ -68,6 +104,11 @@ function Bridge.CalculateSize(schema: {string}, args: {any}): number
 			size += fixedSize
 		elseif typeName == "string" then
 			size += #tostring(args[i] or "")
+		elseif typeName == "table" then
+			local HttpService = game:GetService("HttpService")
+			local serialized = serializeValue(args[i] or {})
+			local json = HttpService:JSONEncode(serialized)
+			size += #json
 		end
 	end
 	return size
@@ -121,6 +162,9 @@ function Bridge.ProcessPackage(EventType: types.EventName, EventName: string, Sc
 			if typeof(param) == "boolean" then
 				Schema[i] = "bool"
 			end
+			if typeof(param) == "table" then
+				Schema[i] = "table"
+			end
 		end
 		Bridge.RegisterEvent(EventName, Schema)
 	end
@@ -143,6 +187,12 @@ function Bridge.ProcessPackage(EventType: types.EventName, EventName: string, Sc
 	end
 	
 	local size = Bridge.CalculateSize(Schema :: {string}, args)
+	
+	-- Rastrear para monitoring
+	if Bridge.OnPackageSent then
+		Bridge.OnPackageSent(EventName, size)
+	end
+	
 	if not Bridge.OutQueue[EventType] then
 		Bridge.OutQueue[EventType] = {}
 	end
@@ -152,7 +202,7 @@ function Bridge.ProcessPackage(EventType: types.EventName, EventName: string, Sc
 		Args = args :: {any},
 		Size = size :: number,
 		Target = Target :: types.PackageTarget?}
-	table.insert(Bridge.OutQueue[EventType],event)
+	table.insert(Bridge.OutQueue[EventType],event :: any)
 end
 
 return Bridge

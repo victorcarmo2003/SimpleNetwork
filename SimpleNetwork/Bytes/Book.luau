@@ -3,9 +3,68 @@
 local cursor = require(script.Parent.Cursor)
 local bytes = script.Parent
 local Types = require(bytes.Parent.Types)
+local HttpService = game:GetService("HttpService")
 local Book = {}
 
 export type cursor = cursor.Cursor
+
+-- Serializador customizado para tipos do Roblox
+local function serializeValue(value: any): any
+	local valueType = typeof(value)
+	
+	if valueType == "CFrame" then
+		return {
+			__type = "CFrame",
+			data = {value:GetComponents()}
+		}
+	elseif valueType == "Vector3" then
+		return {
+			__type = "Vector3",
+			data = {value.X, value.Y, value.Z}
+		}
+	elseif valueType == "Vector2" then
+		return {
+			__type = "Vector2",
+			data = {value.X, value.Y}
+		}
+	elseif valueType == "UDim2" then
+		return {
+			__type = "UDim2",
+			data = {value.X.Scale, value.X.Offset, value.Y.Scale, value.Y.Offset}
+		}
+	elseif valueType == "table" then
+		local serialized = {}
+		for k, v in pairs(value) do
+			serialized[k] = serializeValue(v)
+		end
+		return serialized
+	else
+		return value
+	end
+end
+
+-- Deserializador customizado
+local function deserializeValue(value: any): any
+	if type(value) == "table" then
+		if value.__type == "CFrame" then
+			return CFrame.new(unpack(value.data))
+		elseif value.__type == "Vector3" then
+			return Vector3.new(unpack(value.data))
+		elseif value.__type == "Vector2" then
+			return Vector2.new(unpack(value.data))
+		elseif value.__type == "UDim2" then
+			return UDim2.new(unpack(value.data))
+		else
+			local deserialized = {}
+			for k, v in pairs(value) do
+				deserialized[k] = deserializeValue(v)
+			end
+			return deserialized
+		end
+	else
+		return value
+	end
+end
 
 Book.Writers = {
 	-- NATURAL
@@ -74,6 +133,13 @@ Book.Writers = {
 		obj:writeF32(v.Y.Scale)
 		obj:writeF32(v.Y.Offset)
 	end,
+	
+	-- TABLE (serialized as JSON with Roblox types support)
+	["table"] = function(obj:cursor, v: any)
+		local serialized = serializeValue(v)
+		local json = HttpService:JSONEncode(serialized)
+		obj:writeString(json)
+	end,
 } :: {[Types.byteCodes]: (obj: cursor, v: any?) -> ()}
 
 Book.Readers = {
@@ -133,6 +199,13 @@ Book.Readers = {
 	-- UDIM
 	["ud2"] = function(obj:cursor)
 		return UDim2.new(obj:readF32(), obj:readF32(), obj:readF32(), obj:readF32())
+	end,
+	
+	-- TABLE (deserialized from JSON with Roblox types support)
+	["table"] = function(obj:cursor)
+		local json = obj:readString()
+		local decoded = HttpService:JSONDecode(json)
+		return deserializeValue(decoded)
 	end,
 } :: {[Types.byteCodes]: (obj: cursor) -> (any)}
 
