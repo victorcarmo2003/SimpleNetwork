@@ -125,9 +125,10 @@ end
 --  ====================================
 
 function Cursor:writeString(value: string)
-	local stringSize = #value
+	local safeValue = tostring(value or "")
+	local stringSize = #safeValue
 	self:writeU16(stringSize)
-	buffer.writestring(self._currentBuffer, self.offset, value, stringSize)
+	buffer.writestring(self._currentBuffer, self.offset, value or "", stringSize)
 	self.offset += stringSize
 end
 

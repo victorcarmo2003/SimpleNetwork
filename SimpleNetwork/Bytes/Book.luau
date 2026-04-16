@@ -1,6 +1,8 @@
 --!strict
 --!optimize 2
 local cursor = require(script.Parent.Cursor)
+local bytes = script.Parent
+local Types = require(bytes.Parent.Types)
 local Book = {}
 
 export type cursor = cursor.Cursor
@@ -72,7 +74,7 @@ Book.Writers = {
 		obj:writeF32(v.Y.Scale)
 		obj:writeF32(v.Y.Offset)
 	end,
-}
+} :: {[Types.byteCodes]: (obj: cursor, v: any?) -> ()}
 
 Book.Readers = {
 	-- NATURAL
@@ -132,7 +134,7 @@ Book.Readers = {
 	["ud2"] = function(obj:cursor)
 		return UDim2.new(obj:readF32(), obj:readF32(), obj:readF32(), obj:readF32())
 	end,
-}
+} :: {[Types.byteCodes]: (obj: cursor) -> (any)}
 
 function Book.Start(Amount: number?)
 	cursor.new(Amount or 5)

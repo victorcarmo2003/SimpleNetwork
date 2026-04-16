@@ -1,10 +1,18 @@
-export type byteCodes = "u8" | "u16" | "u32"
+export type byteCodes = "u8" | "u16" | "u32" | "i8" | "i16" | "i32" | "f32" | "string" | "bool" | "v3" | "v2" | "cf" | "ud2"
 
 export type bufferHandler = {
 	[number]: byteCodes
 }
 
 export type EventName = "RemoteEvent" | "RemoteFunction" | "UnreliableEvent" | "LocalEvent" | "LocalFunction"
+
+export type TargetType = "All" | "Client" | "Group" | "Except"
+
+export type PackageTarget = {
+	Type: TargetType,
+	Player: Player?,
+	Players: {Player}?
+}
 
 export type Handler = {
 	Callback: (any) -> (),

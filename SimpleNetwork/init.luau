@@ -26,6 +26,9 @@ local BindableEvent: BindableEvent
 --> SERVICES
 local HttpService = game:GetService("HttpService")
 local Bridge = require(script.Bytes.Bridge)
+local types = require(script.Types)
+local Batch = require(script.Bytes.Batch)
+SimpleNetwork.RegisterEvent = Bridge.RegisterEvent
 
 --> AUXILIAR FUNCTIONS
 local function validateContext(Context: "Server"|"Client"?) : boolean|string
@@ -47,47 +50,51 @@ local function checkServerLoaded()
 	return RemoteFunction:InvokeServer("SP_ServerLoaded")
 end
 
-local function createHandler(handlers: {Types.Handler})
+local function createHandler(handlers: {Types.Handler}, Handler)
 	local Handler = require(script.Utils.Handler)
-	return Handler(handlers)
+	return Handler(handlers, Handler)
 end
 
-local function callEventHandler(Handler: string, Player:Player?, ...)
-	local callEvent = require(script.Call.CallEvent)
-	callEvent(SimpleNetwork,Handler, Player,...)
-end
-
-local function callFunctionHandler(Handler: string, Player:Player?, ...) : any?
-	local callFunction = require(script.Call.CallFunction)
-	return callFunction(SimpleNetwork, Handler, Player, ...)
+local function loadEvents()
+	if not validateContext("Client") then
+		return
+	end
+	local folder = script:FindFirstChild("SP_EVENTS") :: Folder
+	RemoteEvent = folder:WaitForChild("SP_RemoteEvent") :: RemoteEvent
+	RemoteFunction = folder:WaitForChild("SP_RemoteFunction") :: RemoteFunction
+	UnreliableEvent = folder:WaitForChild("SP_UnrealiableEvent") :: UnreliableRemoteEvent
 end
 
 local function ProcessEvents()
+	local decode = require(script.Bytes.Decode)
 	local context = validateContext()
 	if context == "Client" then
-		RemoteEvent.OnClientEvent:Connect(function(Handler:string, ...)
-			callEventHandler(Handler,...)
+		RemoteEvent.OnClientEvent:Connect(function(payload:buffer)
+			decode.Process(SimpleNetwork._clientHandlers, payload, false)
 		end)
 		
-		UnreliableEvent.OnClientEvent:Connect(function(Handler:string, ...)
-			callEventHandler(Handler,...)
+		UnreliableEvent.OnClientEvent:Connect(function(payload:buffer)
+			decode.Process(SimpleNetwork._clientHandlers, payload, false)
 		end)
 		
-		RemoteFunction.OnClientInvoke = function(Handler:string, ...)
-			return callFunctionHandler(Handler,...)
+		RemoteFunction.OnClientInvoke = function(payload:buffer)
+			warn(payload)
+			return decode.Process(SimpleNetwork._clientHandlers, payload, false)
 		end
 		
 	elseif context == "Server" then
-		RemoteEvent.OnServerEvent:Connect(function(Player, Handler:string, ...)
-			callEventHandler(Handler, Player,...)
+		RemoteEvent.OnServerEvent:Connect(function(Player, payload:buffer)
+			decode.Process(SimpleNetwork._serverHandlers, payload, false, Player)
 		end)
 		
-		UnreliableEvent.OnServerEvent:Connect(function(Player, Handler:string, ...)
-			callEventHandler(Handler, Player,...)
+		UnreliableEvent.OnServerEvent:Connect(function(Player, payload:buffer)
+			warn(payload)
+			decode.Process(SimpleNetwork._serverHandlers, payload, false, Player)
 		end)
 
-		RemoteFunction.OnServerInvoke = function(Player, Handler:string, ...)
-			return callFunctionHandler(Handler, Player,...)
+		RemoteFunction.OnServerInvoke = function(Player, payload:buffer)
+			warn(payload)
+			return decode.Process(SimpleNetwork._serverHandlers, payload, false, Player)
 		end
 	end
 end
@@ -99,12 +106,19 @@ end
 -- ======================================================
 --					UNRELIABLE EVENTS
 -- ======================================================
-function SimpleNetwork.FastFireClient(Handler: string,...)
+
+function SimpleNetwork.FastFireClient(Player: Player, Handler: string,...)
+	if not validateContext("Server") then
+		error(`[SimpleNetwork] - FastFireClient must be called from server-side`)
+	end
 	local schema = getSchema(Handler)
 	Bridge.ProcessPackage("UnreliableEvent", schema,...)
 end
 
 function SimpleNetwork.FastFireServer(Handler: string,...)
+	if not validateContext("Client") then
+		error(`[SimpleNetwork] - FastFireClient must be called from client-side`)
+	end
 	local schema = getSchema(Handler)
 	Bridge.ProcessPackage("UnreliableEvent", schema,...)
 end
@@ -112,78 +126,146 @@ end
 -- ======================================================
 --					REMOTE EVENTS
 -- ======================================================
+
 function SimpleNetwork.FireServer(Handler: string,...)
+	if not validateContext("Client") then
+		error(`[SimpleNetwork] - FireServer must be called from client-side`)
+	end
 	local schema = getSchema(Handler)
-	Bridge.ProcessPackage("RemoteEvent", schema,...)
+	Bridge.ProcessPackage("RemoteEvent", Handler, schema, nil, ...)
 end
 
-function SimpleNetwork.FireClient(Handler: string, Player: Player, ...)
+function SimpleNetwork.FireClient(Player: Player, Handler: string, ...)
+	if not validateContext("Server") then
+		error(`[SimpleNetwork] - FireClient must be called from server-side`)
+	end
 	local schema = getSchema(Handler)
-	Bridge.ProcessPackage("RemoteEvent", schema,...)
+	local target: Types.PackageTarget = {
+		Type = "Client",
+		Player = Player
+	}
+	Bridge.ProcessPackage("RemoteEvent", Handler, schema, target, ...)
 end
 
-function SimpleNetwork.FireGroup(Handler: string, Player: Player, ...)
+function SimpleNetwork.FireAllClients(Handler: string, ...)
+	if not validateContext("Server") then
+		error(`[SimpleNetwork] - FireAllClients must be called from server-side`)
+	end
 	local schema = getSchema(Handler)
-	Bridge.ProcessPackage("RemoteEvent", schema,...)
+	local target: Types.PackageTarget = {
+		Type = "All"
+	}
+	Bridge.ProcessPackage("RemoteEvent", Handler, schema, target, ...)
+end
+
+function SimpleNetwork.FireGroup(Handler: string, Players: {Player}, ...)
+	if not validateContext("Server") then
+		error(`[SimpleNetwork] - FireGroup must be called from server-side`)
+	end
+	local schema = getSchema(Handler)
+	local target: Types.PackageTarget = {
+		Type = "Group",
+		Players = Players
+	}
+	Bridge.ProcessPackage("RemoteEvent", Handler, schema, target, ...)
 end
 
 function SimpleNetwork.FireExcept(Handler: string, Player: Player, ...)
+	if not validateContext("Server") then
+		error(`[SimpleNetwork] - FireExcept must be called from server-side`)
+	end
 	local schema = getSchema(Handler)
-	Bridge.ProcessPackage("RemoteEvent", schema,...)
+	local target: Types.PackageTarget = {
+		Type = "Except",
+		Player = Player
+	}
+	Bridge.ProcessPackage("RemoteEvent", Handler, schema, target, ...)
 end
 
 -- ======================================================
 --					BINDABLE FUNCTIONS
 -- ======================================================
+
 function SimpleNetwork.FireLocal(Handler: string, ...)
 	local schema = getSchema(Handler)
-	Bridge.ProcessPackage("LocalEvent", schema,...)
+	Bridge.ProcessPackage("LocalEvent",Handler ,schema,...)
 end
 
 function SimpleNetwork.RequestLocal(Handler: string, ...) : any
 	local schema = getSchema(Handler)
-	Bridge.ProcessPackage("LocalFunction", schema,...)
+	Bridge.ProcessPackage("LocalFunction",Handler ,schema,...)
+	return
 end
 
 -- ======================================================
 --					REMOTE FUNCTIONS
 -- ======================================================
 function SimpleNetwork.RequestServer(Handler: string, ...) : any
+	if not validateContext("Client") then
+		error(`[SimpleNetwork] - RequestServer must be called from client-side`)
+	end
 	local schema = getSchema(Handler)
-	Bridge.ProcessPackage("RemoteFunction", schema,...)
+	Bridge.ProcessPackage("RemoteFunction",Handler ,schema,...)
+	return
 end
 
-function SimpleNetwork.RequestClient(Handler: string,Player:Player, ...) : any
+function SimpleNetwork.RequestClient(Player: Player, Handler: string, ...) : any
+	if not validateContext("Server") then
+		error(`[SimpleNetwork] - RequestClient must be called from server-side`)
+	end
 	local schema = getSchema(Handler)
-	Bridge.ProcessPackage("RemoteFunction", schema,...)
+	Bridge.ProcessPackage("RemoteFunction",Handler ,schema,...)
+	return
 end
 
 -- ======================================================
 --						HANDLERS
 -- ======================================================
 function SimpleNetwork.OnServer(Handler: string)
+	if not validateContext("Server") then
+		error(`[SimpleNetwork] - OnServer must be called from server-side`)
+	end
+	
+	-- Registrar o evento automaticamente para garantir que o ID esteja mapeado
+	if not Bridge.EventToID[Handler] then
+		Bridge.RegisterEvent(Handler, {}) -- Schema vazio, será atualizado quando receber dados
+	end
+	
+	if not SimpleNetwork._serverHandlers[Handler] then
+		SimpleNetwork._serverHandlers[Handler] = {}
+	end
 	local handlers = SimpleNetwork._serverHandlers[Handler]
-	return createHandler(handlers)
+	return createHandler(handlers, Handler)
 end
 
---[[
-Handles the event on clientside (works for RemoteEvent, RemoteFunction and Unreliable)
-@param EventName: String, bufferHandler: Array
-@return Connection
-
-sheet:
-u8 = 0-255
-u16 = 0-65535
-032 = 4.294.967.295
-]]
 function SimpleNetwork.OnClient(Handler: string, bufferHandler: Types.bufferHandler?)
+	if not validateContext("Client") then
+		error(`[SimpleNetwork] - OnClient must be called from client-side`)
+	end
+	
+	-- Registrar o evento automaticamente para garantir que o ID esteja mapeado
+	if not Bridge.EventToID[Handler] then
+		Bridge.RegisterEvent(Handler, {}) -- Schema vazio, será atualizado quando receber dados
+	end
+	
+	if not SimpleNetwork._clientHandlers[Handler] then
+		SimpleNetwork._clientHandlers[Handler] = {}
+	end
 	local handlers = SimpleNetwork._clientHandlers[Handler]
-	return createHandler(handlers)
+	return createHandler(handlers, Handler)
 end
 
 function SimpleNetwork.OnLocal(Handler: string)
+	-- Registrar o evento automaticamente para garantir que o ID esteja mapeado
+	if not Bridge.EventToID[Handler] then
+		Bridge.RegisterEvent(Handler, {}) -- Schema vazio, será atualizado quando receber dados
+	end
+	
+	if not SimpleNetwork._localHandlers[Handler] then
+		SimpleNetwork._localHandlers[Handler] = {}
+	end
 	local handlers = SimpleNetwork._localHandlers[Handler]
-	return createHandler(handlers)
+	return createHandler(handlers, Handler)
 end
 
 -- ======================================================
@@ -196,26 +278,15 @@ end
 -- ======================================================
 --					START METHODS
 -- ======================================================
+
 function SimpleNetwork.StartServer()
 	instanceEvents()
 	ProcessEvents()
-	RemoteFunction.OnServerInvoke = function(player, format)
-		if format == "SP_ServerLoaded" then
-			return SimpleNetwork._serverLoaded
-		end
-		return
-	end
-	
 end
 
 function SimpleNetwork.StartClient()
+	loadEvents()
 	ProcessEvents()
-	RemoteFunction.OnClientInvoke = function(format)
-		if format == "SP_ClientLoaded" then
-			return SimpleNetwork._clientLoaded
-		end
-		return
-	end
 end
 
 --> AUTO-START BY REQUIRE
